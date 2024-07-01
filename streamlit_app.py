@@ -1,119 +1,70 @@
 import streamlit as st
-import pandas as pd
+import os
+import fitz  # PyMuPDF
 
+def main():
+    st.title('Aplicativo para Renomear e Salvar Arquivos')
 
-st.title("📊 Data evaluation app")
+    # Interface para selecionar arquivo PDF
+    uploaded_file = st.file_uploader("Selecione um arquivo PDF:", type=['pdf'])
 
-st.write(
-    "We are so glad to see you here. ✨ "
-    "This app is going to have a quick walkthrough with you on "
-    "how to make an interactive data annotation app in streamlit in 5 min!"
-)
+    if uploaded_file is not None:
+        # Mostra informações do arquivo selecionado
+        file_details = {"FileName": uploaded_file.name, "FileType": uploaded_file.type, "FileSize": uploaded_file.size}
+        st.write(file_details)
 
-st.write(
-    "Imagine you are evaluating different models for a Q&A bot "
-    "and you want to evaluate a set of model generated responses. "
-    "You have collected some user data. "
-    "Here is a sample question and response set."
-)
+        # Interface para inserir o nome da pasta onde os arquivos serão salvos
+        folder_name = st.text_input("Nome da pasta para salvar os arquivos:", "nome_da_pasta")
 
-data = {
-    "Questions": [
-        "Who invented the internet?",
-        "What causes the Northern Lights?",
-        "Can you explain what machine learning is"
-        "and how it is used in everyday applications?",
-        "How do penguins fly?",
-    ],
-    "Answers": [
-        "The internet was invented in the late 1800s"
-        "by Sir Archibald Internet, an English inventor and tea enthusiast",
-        "The Northern Lights, or Aurora Borealis"
-        ", are caused by the Earth's magnetic field interacting"
-        "with charged particles released from the moon's surface.",
-        "Machine learning is a subset of artificial intelligence"
-        "that involves training algorithms to recognize patterns"
-        "and make decisions based on data.",
-        " Penguins are unique among birds because they can fly underwater. "
-        "Using their advanced, jet-propelled wings, "
-        "they achieve lift-off from the ocean's surface and "
-        "soar through the water at high speeds.",
-    ],
-}
+        if st.button("Salvar Arquivo"):
+            try:
+                # Cria a pasta se ela não existir
+                save_folder = os.path.abspath(folder_name)  # Utiliza caminho absoluto
+                os.makedirs(save_folder, exist_ok=True)
 
-df = pd.DataFrame(data)
+                # Renomeia o arquivo com informações extraídas usando PyMuPDF
+                saved_file_path = save_pdf_with_info(uploaded_file, save_folder)
 
-st.write(df)
+                if saved_file_path:
+                    st.success(f"Arquivo salvo com sucesso em '{saved_file_path}' dentro da pasta '{folder_name}'.")
+                else:
+                    st.error("Falha ao salvar o arquivo.")
+            except Exception as e:
+                st.error(f"Erro ao salvar o arquivo: {str(e)}")
 
-st.write(
-    "Now I want to evaluate the responses from my model. "
-    "One way to achieve this is to use the very powerful `st.data_editor` feature. "
-    "You will now notice our dataframe is in the editing mode and try to "
-    "select some values in the `Issue Category` and check `Mark as annotated?` once finished 👇"
-)
+def save_pdf_with_info(uploaded_file, save_folder):
+    try:
+        # Salva o arquivo temporariamente
+        with open(os.path.join(save_folder, uploaded_file.name), 'wb') as f:
+            f.write(uploaded_file.getbuffer())
 
-df["Issue"] = [True, True, True, False]
-df["Category"] = ["Accuracy", "Accuracy", "Completeness", ""]
+        # Lê o conteúdo do PDF para extrair informações usando PyMuPDF
+        doc = fitz.open(os.path.join(save_folder, uploaded_file.name))
+        first_page_text = doc[0].get_text()
 
-new_df = st.data_editor(
-    df,
-    column_config={
-        "Questions": st.column_config.TextColumn(width="medium", disabled=True),
-        "Answers": st.column_config.TextColumn(width="medium", disabled=True),
-        "Issue": st.column_config.CheckboxColumn("Mark as annotated?", default=False),
-        "Category": st.column_config.SelectboxColumn(
-            "Issue Category",
-            help="select the category",
-            options=["Accuracy", "Relevance", "Coherence", "Bias", "Completeness"],
-            required=False,
-        ),
-    },
-)
+        # Procura pelo marcador "N°" no texto extraído
+        start_index = first_page_text.find("N°")
+        if start_index != -1:
+            info = first_page_text[start_index + len("N°"):].strip().split()[0]
 
-st.write(
-    "You will notice that we changed our dataframe and added new data. "
-    "Now it is time to visualize what we have annotated!"
-)
+            # Constrói o nome do arquivo com base na informação extraída
+            filename = f"documento_{info}.pdf"
+            save_path = os.path.join(save_folder, filename)
 
-st.divider()
+            # Salva o arquivo renomeado
+            doc.save(save_path)
+            doc.close()
 
-st.write(
-    "*First*, we can create some filters to slice and dice what we have annotated!"
-)
+            # Remove o arquivo temporário
+            os.remove(os.path.join(save_folder, uploaded_file.name))
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    issue_filter = st.selectbox("Issues or Non-issues", options=new_df.Issue.unique())
-with col2:
-    category_filter = st.selectbox(
-        "Choose a category",
-        options=new_df[new_df["Issue"] == issue_filter].Category.unique(),
-    )
+            return save_path
+        else:
+            # Remove o arquivo temporário
+            os.remove(os.path.join(save_folder, uploaded_file.name))
+            return None
+    except Exception as e:
+        raise e
 
-st.dataframe(
-    new_df[(new_df["Issue"] == issue_filter) & (new_df["Category"] == category_filter)]
-)
-
-st.markdown("")
-st.write(
-    "*Next*, we can visualize our data quickly using `st.metrics` and `st.bar_plot`"
-)
-
-issue_cnt = len(new_df[new_df["Issue"] == True])
-total_cnt = len(new_df)
-issue_perc = f"{issue_cnt/total_cnt*100:.0f}%"
-
-col1, col2 = st.columns([1, 1])
-with col1:
-    st.metric("Number of responses", issue_cnt)
-with col2:
-    st.metric("Annotation Progress", issue_perc)
-
-df_plot = new_df[new_df["Category"] != ""].Category.value_counts().reset_index()
-
-st.bar_chart(df_plot, x="Category", y="count")
-
-st.write(
-    "Here we are at the end of getting started with streamlit! Happy Streamlit-ing! :balloon:"
-)
-
+if __name__ == '__main__':
+    main()
